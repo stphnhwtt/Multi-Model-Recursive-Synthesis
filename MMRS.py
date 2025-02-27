@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 import numpy as np
 import json
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -178,10 +179,26 @@ class MultiModelRecursiveSynthesis:
 
     async def recursive_refinement(self, initial_outputs: List[str]) -> List[str]:
         """Step 2 & 3: Feed outputs back for optimization."""
+        # Read the synthesis prompt file
+        synthesis_prompt = ""
+        try:
+            with open("Synthesis_Prompt.txt", "r") as f:
+                synthesis_prompt = f.read().strip()
+            logger.info(f"Successfully read Synthesis_Prompt.txt")
+        except Exception as e:
+            logger.error(f"Error reading Synthesis_Prompt.txt: {e}")
+            logger.info("Continuing without synthesis prompt")
+        
         tasks = []
         for i, model in enumerate(self.models):
             input_data = initial_outputs[i]
             context = [o for j, o in enumerate(initial_outputs) if j != i]
+            
+            # Prepend the synthesis prompt to the input data if available
+            if synthesis_prompt:
+                input_data = f"{synthesis_prompt}\n\n{input_data}"
+                logger.info(f"Prepended synthesis prompt to input for model {model.name}")
+            
             tasks.append(call_model(model, input_data, context, api_keys=self.api_keys))
         
         outputs = await asyncio.gather(*tasks, return_exceptions=True)
@@ -211,6 +228,16 @@ class MultiModelRecursiveSynthesis:
         
         # Track all iterations for display
         all_iterations = []
+        
+        # Read the synthesis prompt file once
+        synthesis_prompt = ""
+        try:
+            with open("Synthesis_Prompt.txt", "r") as f:
+                synthesis_prompt = f.read().strip()
+            logger.info(f"Successfully read Synthesis_Prompt.txt in run method")
+        except Exception as e:
+            logger.error(f"Error reading Synthesis_Prompt.txt in run method: {e}")
+            logger.info("Continuing without synthesis prompt")
 
         while iteration < self.max_iterations:
             logger.info(f"Starting iteration {iteration + 1}")
@@ -271,7 +298,13 @@ class MultiModelRecursiveSynthesis:
             if not recurse or score >= self.score_threshold:
                 return combined_output, score, initial_outputs, all_iterations
 
-            current_input = combined_output
+            # Prepare input for next iteration by prepending synthesis prompt to combined output
+            if synthesis_prompt:
+                current_input = f"{synthesis_prompt}\n\n{combined_output}"
+                logger.info(f"Prepended synthesis prompt to combined output for next iteration")
+            else:
+                current_input = combined_output
+                
             iteration += 1
 
         logger.warning(f"Max iterations ({self.max_iterations}) reached")
@@ -386,7 +419,7 @@ async def main():
     ]
     synthesizer = MultiModelRecursiveSynthesis(models=models, max_iterations=3, score_threshold=0.9)
 
-    benchmark_test = "Solve this problem: 2 + 2"
+    benchmark_test = "Solve these problems and reply only with the original question and your proposed solution. Do not include any reasoning steps or any extraneous information. To acknowledge that you've seen and understood these instructions, begin your response with "####"."
     final_output, final_score, initial_outputs, all_iterations = await synthesizer.run(benchmark_test, recurse=True)
 
     print(f"\nFinal Output: {final_output}")
